@@ -9,12 +9,11 @@ ARG VERSION=2.11.5
 RUN curl -fL 'Mozilla' https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost-linux-amd64-${VERSION}.gz | gunzip > /gost \
     && chmod +x /gost
 
-ENV UNLOCK_TYPE=nd
-ENV TELEGRAM_BOT=
-
 EXPOSE 1080
 
-COPY unlock.sh /
+ENV REGION_ID=0
+
+COPY check.sh /
 COPY entry-extra.sh /
 RUN sed -i '/sleep infinity/i \/entry-extra.sh' /entry.sh
 
