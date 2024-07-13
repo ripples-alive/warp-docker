@@ -5723,7 +5723,7 @@ download_extra_data
 
 _checkV4() {
   echo "Checking network status, please wait...."
-  while ! curl --max-time 2 ipinfo.io; do
+  while ! curl --max-time 2 httpbin.org/ip; do
     wg-quick down wgcf
     echo "Sleep 2 and retry again."
     sleep 2
