@@ -4,7 +4,7 @@ RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y python3 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG VERSION=2.11.5
+ARG VERSION
 
 RUN curl -fL 'Mozilla' https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost-linux-amd64-${VERSION}.gz | gunzip > /gost \
     && chmod +x /gost
