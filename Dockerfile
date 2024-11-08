@@ -1,13 +1,12 @@
+FROM ginuerzh/gost:2.12.0 AS gost
+
 FROM neilpang/wgcf-docker
 
 RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y python3 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG VERSION
-
-RUN curl -fL 'Mozilla' https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost-linux-amd64-${VERSION}.gz | gunzip > /gost \
-    && chmod +x /gost
+COPY --from=gost /bin/gost /
 
 EXPOSE 1080
 
