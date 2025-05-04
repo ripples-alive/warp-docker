@@ -1,6 +1,9 @@
-FROM ginuerzh/gost:2.12.0 AS gost
+ARG WARP_VERSION=latest
+ARG GOST_VERSION=latest
 
-FROM neilpang/wgcf-docker
+FROM ginuerzh/gost:${GOST_VERSION} AS gost
+
+FROM neilpang/wgcf-docker:${WARP_VERSION}
 
 RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y python3 \
