@@ -5724,10 +5724,10 @@ download_extra_data
 _checkV4() {
   echo "Checking network status, please wait...."
   while ! curl --max-time 2 httpbin.org/ip; do
-    wg-quick down wgcf
+    wg-quick down wg0
     echo "Sleep 2 and retry again."
     sleep 2
-    wg-quick up wgcf
+    wg-quick up wg0
   done
 }
 
@@ -5740,8 +5740,8 @@ while true; do
     echo $netflixResult
     if echo $disneyResult | grep No >/dev/null || echo $netflixResult | grep No > /dev/null
     then
-        echo restarting wgcf
-        wg-quick down wgcf && wg-quick up wgcf
+        echo restarting wg0
+        wg-quick down wg0 && wg-quick up wg0
         _checkV4
     else
         echo unlocked

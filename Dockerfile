@@ -1,22 +1,10 @@
-ARG WARP_VERSION=latest
-ARG GOST_VERSION=latest
+ARG MICROWARP_VERSION=latest
 
-FROM ginuerzh/gost:${GOST_VERSION} AS gost
+FROM ghcr.io/ccbkkb/microwarp:${MICROWARP_VERSION}
 
-FROM neilpang/wgcf-docker:${WARP_VERSION}
-
-RUN apt-get update && apt-get -y upgrade \
-    && apt-get install -y python3 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=gost /bin/gost /
-
-EXPOSE 1080
+RUN apk add --no-cache grep openssl
 
 ENV REGION_ID=0
 
 COPY check.sh /
-COPY entry-extra.sh /
-RUN sed -i '/sleep infinity/i \/entry-extra.sh' /entry.sh
-
-CMD ["-4"]
+RUN sed -i '/1\.1\.1\.1/a\\[ -n "$UNLOCK_STREAM" ] && \/check.sh &' /app/entrypoint.sh
