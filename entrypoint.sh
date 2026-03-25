@@ -190,10 +190,97 @@ run_microsocks() {
   fi
 }
 
+# Run the Disney+ and Netflix probes from check.unlock.media via check.sh
+# without modifying the upstream script body more than necessary.
+run_unlock_probe() {
+  local mode="${1:-}"
+  local probe_output=""
+
+  probe_output="$(
+    CHECK_SH_SOURCE_ONLY=1
+    export CHECK_SH_SOURCE_ONLY
+
+    # shellcheck disable=SC1091
+    . /check.sh
+
+    process -E en
+    download_extra_data
+
+    case "$mode" in
+      -4)
+        CURL_DEFAULT_OPTS="-4 ${CURL_OPTS}"
+        USE_IPV4=1
+        USE_IPV6=0
+        ;;
+      -6)
+        CURL_DEFAULT_OPTS="-6 ${CURL_OPTS}"
+        USE_IPV4=0
+        USE_IPV6=1
+        ;;
+      *)
+        CURL_DEFAULT_OPTS="${CURL_OPTS}"
+        USE_IPV4=1
+        USE_IPV6=0
+        ;;
+    esac
+
+    MediaUnlockTest_DisneyPlus
+    MediaUnlockTest_Netflix
+  )"
+
+  printf '%s\n' "$probe_output"
+}
+
+# Poll the check.unlock.media Disney+ and Netflix probes and recycle wgcf
+# when either service becomes unavailable.
+monitor_unlock_status() {
+  local mode="${1:-}"
+  local interval="${UNLOCK_INTERVAL:-300}"
+  local probe_output=""
+
+  while true; do
+    log_info "Running Disney+ and Netflix unlock checks."
+    probe_output="$(run_unlock_probe "$mode")"
+    printf '%s\n' "$probe_output"
+
+    if printf '%s\n' "$probe_output" | grep 'Disney+:' | grep -q 'No' || \
+      printf '%s\n' "$probe_output" | grep 'Netflix:' | grep -q 'No'; then
+      log_warn "Disney+ or Netflix is locked. Restarting wgcf."
+      if ! wg-quick down wgcf; then
+        log_warn "wgcf did not shut down cleanly before restart."
+      fi
+      wg-quick up wgcf
+      check_connection
+      continue
+    fi
+
+    log_info "Disney+ and Netflix are available. Sleeping for ${interval} seconds."
+    sleep "$interval"
+  done
+}
+
 # Retry the WireGuard tunnel until outbound connectivity becomes available.
 check_connection() {
+  local trace_output=""
+  local current_ip=""
+  local warp_status=""
+
   log_info "Checking outbound connectivity through wgcf."
-  while ! curl --silent --show-error --fail --max-time 2 https://cloudflare.com/cdn-cgi/trace >/dev/null; do
+  while true; do
+    if trace_output="$(curl --silent --show-error --fail --max-time 2 https://cloudflare.com/cdn-cgi/trace)"; then
+      current_ip="$(printf '%s\n' "$trace_output" | sed -n 's/^ip=//p' | head -n 1)"
+      warp_status="$(printf '%s\n' "$trace_output" | sed -n 's/^warp=//p' | head -n 1)"
+
+      if [ -n "$current_ip" ] && [ -n "$warp_status" ]; then
+        log_info "Connectivity check passed. Exit IP: ${current_ip}. WARP status: ${warp_status}."
+      elif [ -n "$current_ip" ]; then
+        log_info "Connectivity check passed. Exit IP: ${current_ip}."
+      else
+        log_info "Connectivity check passed."
+      fi
+      return 0
+    fi
+
     if ! wg-quick down wgcf; then
       log_warn "wgcf did not shut down cleanly during the retry cycle."
     fi
@@ -202,7 +289,6 @@ check_connection() {
     log_info "Bringing wgcf back up for another connectivity check."
     wg-quick up wgcf
   done
-  log_info "Connectivity check passed."
 }
 
 # Accept "-4" or "-6" to disable one address family in the generated config.
@@ -293,8 +379,8 @@ run_wgcf() {
 
   # Run the unlock check in the background when explicitly enabled.
   if [ -n "${UNLOCK_STREAM:-}" ]; then
-    log_info "UNLOCK_STREAM is enabled; starting /check.sh in the background."
-    /check.sh &
+    log_info "UNLOCK_STREAM is enabled; starting the check.unlock.media-based unlock monitor in the background."
+    monitor_unlock_status "$mode" &
   fi
 
   # Keep the SOCKS server in the background and wait for managed jobs.
