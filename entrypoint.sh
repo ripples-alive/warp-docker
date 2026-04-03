@@ -23,6 +23,12 @@ log_error() {
   log "ERROR" "$@" >&2
 }
 
+is_positive_integer() {
+  local value="$1"
+
+  [[ "$value" =~ ^[1-9][0-9]*$ ]]
+}
+
 trim() {
   local value="$1"
 
@@ -231,6 +237,57 @@ run_unlock_probe() {
   printf '%s\n' "$probe_output"
 }
 
+stop_background_process() {
+  local pid="${1:-}"
+  local name="${2:-background process}"
+
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    log_info "Stopping ${name} (pid ${pid})."
+    kill "$pid" 2>/dev/null || true
+  fi
+
+  wait "$pid" 2>/dev/null || true
+}
+
+monitor_service_health() {
+  local interval="${HEALTHCHECK_INTERVAL:-30}"
+  local retries="${HEALTHCHECK_RETRIES:-3}"
+  local failures=0
+
+  if ! is_positive_integer "$interval"; then
+    log_warn "Invalid HEALTHCHECK_INTERVAL: ${interval}. Falling back to 30 seconds."
+    interval=30
+  fi
+
+  if ! is_positive_integer "$retries"; then
+    log_warn "Invalid HEALTHCHECK_RETRIES: ${retries}. Falling back to 3."
+    retries=3
+  fi
+
+  while true; do
+    if /healthcheck.sh; then
+      if [ "$failures" -gt 0 ]; then
+        log_info "Healthcheck recovered after ${failures} consecutive failure(s)."
+      fi
+      failures=0
+    else
+      failures=$((failures + 1))
+      log_warn "Healthcheck failed (${failures}/${retries})."
+
+      if [ "$failures" -ge "$retries" ]; then
+        log_error "The service is unhealthy after ${failures} consecutive healthcheck failure(s)."
+        return 1
+      fi
+    fi
+
+    sleep "$interval"
+  done
+}
+
 # Poll the check.unlock.media Disney+ and Netflix probes and recycle wgcf
 # when either service becomes unavailable.
 monitor_unlock_status() {
@@ -297,6 +354,11 @@ run_wgcf() {
   local default_gateway_interface
   local default_route_ip
   local mode="${1:-}"
+  local unlock_monitor_pid=""
+  local health_monitor_pid=""
+  local microsocks_pid=""
+  local exited_pid=""
+  local exit_code=0
 
   trap 'down_wgcf' ERR TERM INT
 
@@ -381,12 +443,54 @@ run_wgcf() {
   if [ -n "${UNLOCK_STREAM:-}" ]; then
     log_info "UNLOCK_STREAM is enabled; starting the check.unlock.media-based unlock monitor in the background."
     monitor_unlock_status "$mode" &
+    unlock_monitor_pid=$!
   fi
 
-  # Keep the SOCKS server in the background and wait for managed jobs.
+  # Keep the SOCKS server in the background and supervise all managed jobs.
   log_info "Launching the SOCKS proxy."
   run_microsocks &
-  wait
+  microsocks_pid=$!
+
+  if [ "${ENABLE_HEALTHCHECK:-1}" = "0" ]; then
+    log_warn "ENABLE_HEALTHCHECK is 0; skipping the internal health monitor."
+  else
+    log_info "Starting the internal health monitor."
+    monitor_service_health &
+    health_monitor_pid=$!
+  fi
+
+  set +e
+  wait -n -p exited_pid \
+    "$microsocks_pid" \
+    ${unlock_monitor_pid:+"$unlock_monitor_pid"} \
+    ${health_monitor_pid:+"$health_monitor_pid"}
+  exit_code=$?
+  set -e
+
+  if [ "$exited_pid" = "$microsocks_pid" ]; then
+    log_error "The SOCKS proxy exited with code ${exit_code}."
+  elif [ -n "$unlock_monitor_pid" ] && [ "$exited_pid" = "$unlock_monitor_pid" ]; then
+    if [ "$exit_code" -eq 0 ]; then
+      exit_code=1
+    fi
+    log_error "The unlock monitor exited unexpectedly with code ${exit_code}."
+  elif [ -n "$health_monitor_pid" ] && [ "$exited_pid" = "$health_monitor_pid" ]; then
+    if [ "$exit_code" -eq 0 ]; then
+      exit_code=1
+    fi
+    log_error "The internal health monitor exited with code ${exit_code}."
+  else
+    if [ "$exit_code" -eq 0 ]; then
+      exit_code=1
+    fi
+    log_error "A managed background job exited unexpectedly with code ${exit_code}."
+  fi
+
+  stop_background_process "$microsocks_pid" "SOCKS proxy"
+  stop_background_process "$unlock_monitor_pid" "unlock monitor"
+  stop_background_process "$health_monitor_pid" "health monitor"
+
+  return "$exit_code"
 }
 
 run_wgcf "$@"
