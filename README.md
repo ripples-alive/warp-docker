@@ -76,6 +76,30 @@ Example:
 https_proxy=http://127.0.0.1:7890 ./build.sh
 ```
 
+## GitHub Build
+
+The repository now includes a GitHub Actions workflow at [.github/workflows/build-ghcr.yml](/workspace/warp-docker/.github/workflows/build-ghcr.yml) that automatically builds the image on GitHub.
+
+Trigger behavior:
+
+- push to `main`: build and push to `ghcr.io`
+- push a tag like `v1.2.3`: build and push a versioned image to `ghcr.io`
+- pull request: build only, no push
+- manual run: supported via `workflow_dispatch`
+
+Published image name:
+
+```bash
+ghcr.io/ripples-alive/warp
+```
+
+Examples:
+
+```bash
+docker pull ghcr.io/ripples-alive/warp:latest
+docker run --rm ghcr.io/ripples-alive/warp:latest
+```
+
 ## Runtime Requirements
 
 - Required: `NET_ADMIN`
