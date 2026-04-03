@@ -65,7 +65,10 @@ Build and push the multi-arch image:
 ./build.sh
 ```
 
-If your build environment needs an HTTP proxy, `build.sh` will automatically forward `http_proxy`, `https_proxy`, and `no_proxy` to `docker buildx build`.
+If your build environment needs an HTTP proxy, `build.sh` will automatically forward `http_proxy`, `https_proxy`, and `no_proxy` to both:
+
+- the BuildKit builder container, so `FROM alpine:latest` and other registry requests can use the proxy
+- the Dockerfile build steps, so `apk`, `git clone`, and `curl` inside `RUN` also use the proxy
 
 Example:
 
