@@ -7,6 +7,8 @@ BUILDER=${NAME}-builder
 BUILD_HTTP_PROXY=${http_proxy:-${HTTP_PROXY:-}}
 BUILD_HTTPS_PROXY=${https_proxy:-${HTTPS_PROXY:-}}
 BUILD_NO_PROXY=${no_proxy:-${NO_PROXY:-}}
+DEFAULT_BUILD_VARIANTS="microsocks gost"
+BUILD_VARIANTS=${BUILD_VARIANTS:-$DEFAULT_BUILD_VARIANTS}
 
 cleanup() {
     docker buildx stop "$BUILDER" >/dev/null 2>&1 || true
@@ -42,29 +44,54 @@ fi
 docker buildx create "$@"
 docker buildx inspect --bootstrap
 
-set -- \
-    --platform linux/amd64,linux/arm64 \
-    --push \
-    --pull \
-    --tag "ripples/$NAME:latest" \
-    --builder "$BUILDER"
+build_variant() {
+    variant="$1"
 
-if [ -n "$BUILD_HTTP_PROXY" ]; then
-    set -- "$@" \
-        --build-arg "http_proxy=$BUILD_HTTP_PROXY" \
-        --build-arg "HTTP_PROXY=$BUILD_HTTP_PROXY"
-fi
+    set -- \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        --pull \
+        --builder "$BUILDER"
 
-if [ -n "$BUILD_HTTPS_PROXY" ]; then
-    set -- "$@" \
-        --build-arg "https_proxy=$BUILD_HTTPS_PROXY" \
-        --build-arg "HTTPS_PROXY=$BUILD_HTTPS_PROXY"
-fi
+    case "$variant" in
+        microsocks)
+            set -- "$@" \
+                --target microsocks-runtime \
+                --tag "ripples/$NAME:latest" \
+                --tag "ripples/$NAME:microsocks"
+            ;;
+        gost)
+            set -- "$@" \
+                --target gost-runtime \
+                --tag "ripples/$NAME:gost"
+            ;;
+        *)
+            printf 'unsupported build variant: %s\n' "$variant" >&2
+            exit 1
+            ;;
+    esac
 
-if [ -n "$BUILD_NO_PROXY" ]; then
-    set -- "$@" \
-        --build-arg "no_proxy=$BUILD_NO_PROXY" \
-        --build-arg "NO_PROXY=$BUILD_NO_PROXY"
-fi
+    if [ -n "$BUILD_HTTP_PROXY" ]; then
+        set -- "$@" \
+            --build-arg "http_proxy=$BUILD_HTTP_PROXY" \
+            --build-arg "HTTP_PROXY=$BUILD_HTTP_PROXY"
+    fi
 
-docker buildx build "$@" .
+    if [ -n "$BUILD_HTTPS_PROXY" ]; then
+        set -- "$@" \
+            --build-arg "https_proxy=$BUILD_HTTPS_PROXY" \
+            --build-arg "HTTPS_PROXY=$BUILD_HTTPS_PROXY"
+    fi
+
+    if [ -n "$BUILD_NO_PROXY" ]; then
+        set -- "$@" \
+            --build-arg "no_proxy=$BUILD_NO_PROXY" \
+            --build-arg "NO_PROXY=$BUILD_NO_PROXY"
+    fi
+
+    docker buildx build "$@" .
+}
+
+for variant in $BUILD_VARIANTS; do
+    build_variant "$variant"
+done

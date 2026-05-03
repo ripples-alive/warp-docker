@@ -1,6 +1,6 @@
 # warp-docker
 
-A WARP SOCKS5 container built with `wgcf`, WireGuard, and `microsocks`.
+A WARP SOCKS5 container built with `wgcf`, WireGuard, and either `microsocks` or `gost`.
 
 On startup, the container will:
 
@@ -15,6 +15,8 @@ Persistent state is stored in `/etc/wgcf`.
 ## Quick Start
 
 Default dual-stack mode:
+
+This uses the default `microsocks` variant.
 
 ```bash
 docker run -d \
@@ -57,12 +59,41 @@ docker run -d \
   ripples/warp:latest -6
 ```
 
+Gost variant:
+
+```bash
+docker run -d \
+  --name warp \
+  --restart unless-stopped \
+  --cap-add NET_ADMIN \
+  --cap-add SYS_MODULE \
+  --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+  -p 1080:1080 \
+  -v /lib/modules:/lib/modules:ro \
+  -v "$(pwd)/wgcf:/etc/wgcf" \
+  ripples/warp:gost
+```
+
 ## Build
 
-Build and push the multi-arch image:
+Build and push the multi-arch images:
 
 ```bash
 ./build.sh
+```
+
+By default, `build.sh` publishes both variants:
+
+- `ripples/warp:latest` and `ripples/warp:microsocks`
+- `ripples/warp:gost`
+
+`ripples/warp:latest` is intentionally the same image as `ripples/warp:microsocks`, so your existing pulls keep working.
+
+If you only want one variant, set `BUILD_VARIANTS`:
+
+```bash
+BUILD_VARIANTS=microsocks ./build.sh
+BUILD_VARIANTS=gost ./build.sh
 ```
 
 If your build environment needs an HTTP proxy, `build.sh` will automatically forward `http_proxy`, `https_proxy`, and `no_proxy` to both:
@@ -82,22 +113,24 @@ The repository now includes a GitHub Actions workflow at [.github/workflows/buil
 
 Trigger behavior:
 
-- push to `main`: build and push to `ghcr.io`
-- push a tag like `v1.2.3`: build and push a versioned image to `ghcr.io`
+- push to `main`: build and push both variants to `ghcr.io`
+- push a tag like `v1.2.3`: build and push versioned tags for both variants
 - pull request: build only, no push
 - manual run: supported via `workflow_dispatch`
 
-Published image name:
+Published image tags:
 
 ```bash
-ghcr.io/ripples-alive/warp
+ghcr.io/ripples-alive/warp:latest
+ghcr.io/ripples-alive/warp:microsocks
+ghcr.io/ripples-alive/warp:gost
 ```
 
 Examples:
 
 ```bash
 docker pull ghcr.io/ripples-alive/warp:latest
-docker run --rm ghcr.io/ripples-alive/warp:latest
+docker pull ghcr.io/ripples-alive/warp:gost
 ```
 
 ## Runtime Requirements
@@ -119,6 +152,14 @@ Notes:
 - default: dual-stack
 - `-4`: IPv4-only
 - `-6`: IPv6-only
+
+## Image Variants
+
+- `latest`: default image, currently backed by `microsocks`
+- `microsocks`: explicit `microsocks` variant
+- `gost`: `gost` variant
+
+Both variants share the same WARP setup, health checks, and unlock monitoring behavior.
 
 ## Environment Variables
 

@@ -18,17 +18,69 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: microsocks
+            target: microsocks-runtime
+          - variant: gost
+            target: gost-runtime
 
     steps:
       - name: Check Out Repository
         uses: actions/checkout@v4
 
-      - name: Prepare Image Name
+      - name: Prepare Image Tags
         id: prep
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image_name="ghcr.io/${owner}/${IMAGE_NAME}"
+          short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
+          tags=""
+
+          add_tag() {
+            if [ -z "$tags" ]; then
+              tags="${image_name}:$1"
+            else
+              tags="$(printf '%s\n%s:%s' "$tags" "$image_name" "$1")"
+            fi
+          }
+
+          case "$VARIANT" in
+            microsocks)
+              add_tag "sha-${short_sha}"
+              if [ "${GITHUB_REF_TYPE:-}" = "branch" ] && [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+                add_tag "latest"
+                add_tag "microsocks"
+              elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+                add_tag "${GITHUB_REF_NAME}"
+                add_tag "${GITHUB_REF_NAME}-microsocks"
+              fi
+              ;;
+            gost)
+              add_tag "sha-${short_sha}-gost"
+              if [ "${GITHUB_REF_TYPE:-}" = "branch" ] && [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+                add_tag "gost"
+              elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+                add_tag "${GITHUB_REF_NAME}-gost"
+              fi
+              ;;
+            *)
+              printf 'unsupported variant: %s\n' "$VARIANT" >&2
+              exit 1
+              ;;
+          esac
+
           echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "$tags"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Set Up QEMU
         uses: docker/setup-qemu-action@v3
@@ -44,26 +96,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.prep.outputs.image_name }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
-
       - name: Build And Push Image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           pull: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.prep.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}

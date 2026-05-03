@@ -176,24 +176,78 @@ down_wgcf() {
   exit "$exit_code"
 }
 
-# Start the SOCKS proxy and replace the subshell with the proxy process.
-run_microsocks() {
+format_uri_host() {
+  local host="$1"
+
+  case "$host" in
+    \[*\])
+      printf '%s' "$host"
+      ;;
+    *:*)
+      printf '[%s]' "$host"
+      ;;
+    *)
+      printf '%s' "$host"
+      ;;
+  esac
+}
+
+build_gost_listen_addr() {
   local listen_addr="${BIND_ADDR:-0.0.0.0}"
   local listen_port="${BIND_PORT:-1080}"
+  local formatted_host=""
+
+  if [ "$listen_addr" = "0.0.0.0" ]; then
+    if [ -n "${SOCKS_USER:-}" ] && [ -n "${SOCKS_PASS:-}" ]; then
+      printf 'socks5://%s:%s@0.0.0.0:%s?notls=true' "$SOCKS_USER" "$SOCKS_PASS" "$listen_port"
+    else
+      printf 'socks5://0.0.0.0:%s?notls=true' "$listen_port"
+    fi
+    return 0
+  fi
+
+  formatted_host="$(format_uri_host "$listen_addr")"
+
+  if [ -n "${SOCKS_USER:-}" ] && [ -n "${SOCKS_PASS:-}" ]; then
+    printf 'socks5://%s:%s@%s:%s?notls=true' "$SOCKS_USER" "$SOCKS_PASS" "$formatted_host" "$listen_port"
+  else
+    printf 'socks5://%s:%s?notls=true' "$formatted_host" "$listen_port"
+  fi
+}
+
+# Start the SOCKS proxy and replace the subshell with the proxy process.
+run_socks_proxy() {
+  local backend="${SOCKS_BACKEND:-microsocks}"
+  local listen_addr="${BIND_ADDR:-0.0.0.0}"
+  local listen_port="${BIND_PORT:-1080}"
+  local gost_listen_addr=""
 
   if [ -n "${SOCKS_USER:-}" ] && [ -n "${SOCKS_PASS:-}" ]; then
     log_info "SOCKS authentication is enabled for user: $SOCKS_USER."
-    log_info "Starting the SOCKS proxy on ${listen_addr}:${listen_port}."
-    exec microsocks -i "$listen_addr" -p "$listen_port" -u "$SOCKS_USER" -P "$SOCKS_PASS"
+  elif [ -n "${SOCKS_USER:-}" ] || [ -n "${SOCKS_PASS:-}" ]; then
+    log_warn "SOCKS credentials are incomplete; starting without authentication."
   else
-    if [ -n "${SOCKS_USER:-}" ] || [ -n "${SOCKS_PASS:-}" ]; then
-      log_warn "SOCKS credentials are incomplete; starting without authentication."
-    else
-      log_warn "SOCKS credentials are not set; starting without authentication."
-    fi
-    log_info "Starting the SOCKS proxy on ${listen_addr}:${listen_port}."
-    exec microsocks -i "$listen_addr" -p "$listen_port"
+    log_warn "SOCKS credentials are not set; starting without authentication."
   fi
+
+  case "$backend" in
+    gost)
+      gost_listen_addr="$(build_gost_listen_addr)"
+      log_info "Starting the SOCKS proxy on ${listen_addr}:${listen_port} via gost."
+      exec gost -L="$gost_listen_addr"
+      ;;
+    microsocks)
+      log_info "Starting the SOCKS proxy on ${listen_addr}:${listen_port} via microsocks."
+      if [ -n "${SOCKS_USER:-}" ] && [ -n "${SOCKS_PASS:-}" ]; then
+        exec microsocks -i "$listen_addr" -p "$listen_port" -u "$SOCKS_USER" -P "$SOCKS_PASS"
+      fi
+      exec microsocks -i "$listen_addr" -p "$listen_port"
+      ;;
+    *)
+      log_error "Unsupported SOCKS_BACKEND: ${backend}."
+      return 1
+      ;;
+  esac
 }
 
 # Run the Disney+ and Netflix probes from check.unlock.media via check.sh
@@ -356,7 +410,7 @@ run_wgcf() {
   local mode="${1:-}"
   local unlock_monitor_pid=""
   local health_monitor_pid=""
-  local microsocks_pid=""
+  local socks_proxy_pid=""
   local exited_pid=""
   local exit_code=0
 
@@ -448,8 +502,8 @@ run_wgcf() {
 
   # Keep the SOCKS server in the background and supervise all managed jobs.
   log_info "Launching the SOCKS proxy."
-  run_microsocks &
-  microsocks_pid=$!
+  run_socks_proxy &
+  socks_proxy_pid=$!
 
   if [ "${ENABLE_HEALTHCHECK:-1}" = "0" ]; then
     log_warn "ENABLE_HEALTHCHECK is 0; skipping the internal health monitor."
@@ -461,13 +515,13 @@ run_wgcf() {
 
   set +e
   wait -n -p exited_pid \
-    "$microsocks_pid" \
+    "$socks_proxy_pid" \
     ${unlock_monitor_pid:+"$unlock_monitor_pid"} \
     ${health_monitor_pid:+"$health_monitor_pid"}
   exit_code=$?
   set -e
 
-  if [ "$exited_pid" = "$microsocks_pid" ]; then
+  if [ "$exited_pid" = "$socks_proxy_pid" ]; then
     log_error "The SOCKS proxy exited with code ${exit_code}."
   elif [ -n "$unlock_monitor_pid" ] && [ "$exited_pid" = "$unlock_monitor_pid" ]; then
     if [ "$exit_code" -eq 0 ]; then
@@ -486,7 +540,7 @@ run_wgcf() {
     log_error "A managed background job exited unexpectedly with code ${exit_code}."
   fi
 
-  stop_background_process "$microsocks_pid" "SOCKS proxy"
+  stop_background_process "$socks_proxy_pid" "SOCKS proxy"
   stop_background_process "$unlock_monitor_pid" "unlock monitor"
   stop_background_process "$health_monitor_pid" "health monitor"
 
