@@ -10,6 +10,9 @@ on:
     tags:
       - "v*"
   pull_request:
+  schedule:
+    # Rebuild latest images daily to pick up upstream latest base images and packages.
+    - cron: "45 4 * * *"
   workflow_dispatch:
 
 jobs:

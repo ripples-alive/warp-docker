@@ -114,6 +114,7 @@ The repository now includes a GitHub Actions workflow at [.github/workflows/buil
 Trigger behavior:
 
 - push to `main`: build and push both variants to `ghcr.io`
+- scheduled daily rebuild: build and push both current `latest` variants to `ghcr.io`
 - push a tag like `v1.2.3`: build and push versioned tags for both variants
 - pull request: build only, no push
 - manual run: supported via `workflow_dispatch`
